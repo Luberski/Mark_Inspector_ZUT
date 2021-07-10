@@ -7,18 +7,15 @@ from pydub import AudioSegment
 from pydub.playback import play
 import os
 
-URL="https://edziekanat.zut.edu.pl/WU/Logowanie2.aspx"
+
+LOGIN_URL="https://edziekanat.zut.edu.pl/WU/Logowanie2.aspx"
+DATA_URL="https://edziekanat.zut.edu.pl/WU/OcenyP.aspx"
 headers={"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36"}
-username = ""
-password = ""
 user = "student"
-ss = None
-data = []
 clear = lambda: os.system('cls')
 
-def check_changes():
-    global data
 
+def check_changes(data):
     old_data = []
     with open('oceny.txt') as f:
         for line in f:
@@ -33,23 +30,29 @@ def check_changes():
                         play(AudioSegment.from_mp3("audio/2.mp3"))
                     except:
                         print('No audio file. Place your audio files under audio/5.mp3, audio/2.mp3, audio/3+.mp3 in .exe directory')
+
                 elif(data[i][j] == '5'):
                     try:
                         play(AudioSegment.from_mp3("audio/5.mp3"))
                     except:
                         print('No audio file. Place your audio files under audio/5.mp3, audio/2.mp3, audio/3+.mp3 in .exe directory')
+
                 else:
                     try:
                         play(AudioSegment.from_mp3("audio/3+.mp3"))
                     except:
                         print('No audio file. Place your audio files under audio/5.mp3, audio/2.mp3, audio/3+.mp3 in .exe directory')
+
                 print(f'{data[i][0]} ocena: {data[i][j]}')
                 input('Press enter to continue...')
                 clear()
 
-    
+                return True
 
-def saveto_file():
+    return False
+
+
+def saveto_file(data):
     with open('oceny.txt', "w", encoding='utf-8') as f:
         for li in data:
             for ele in li:
@@ -57,24 +60,27 @@ def saveto_file():
             f.write('\n')
         f.close()
 
-def grab_data():
-    global data
-    
-    session=requests.Session()
-    session.headers.update(headers)
-    req=session.get(URL)
-    soup=BeautifulSoup(req.content, 'html.parser')
 
-    EVENTTARGET=soup.find(id="__EVENTTARGET")['value']
-    EVENTARGUMENT=soup.find(id="__EVENTARGUMENT")['value']
-    VIEWSTATE=soup.find(id="__VIEWSTATE")['value']
-    VIEWSTATEGENERATOR=soup.find(id="__VIEWSTATEGENERATOR")['value']
+def get_payload(session, username, password):
+    resp=session.get(LOGIN_URL)
+    soup=BeautifulSoup(resp.content, 'html.parser')
+
+    # Getting data needed for POST payload
+    tokens = dict()
+    try:
+        tokens["EVENTTARGET"] = soup.find(id="__EVENTTARGET")['value']
+        tokens["EVENTARGUMENT"] = soup.find(id="__EVENTARGUMENT")['value']
+        tokens["VIEWSTATE"] = soup.find(id="__VIEWSTATE")['value']
+        tokens["VIEWSTATEGENERATOR"] = soup.find(id="__VIEWSTATEGENERATOR")['value']
+    except:
+        print(f'Could not find necessary tokens in login page.\nMaybe the site has changed?')
+        exit()
 
     payload={
-        "__EVENTTARGET":EVENTTARGET,
-        "__EVENTARGUMENT":EVENTARGUMENT,
-        "__VIEWSTATE":VIEWSTATE,
-        "__VIEWSTATEGENERATOR":VIEWSTATEGENERATOR,
+        "__EVENTTARGET":tokens["EVENTTARGET"],
+        "__EVENTARGUMENT":tokens["EVENTARGUMENT"],
+        "__VIEWSTATE":tokens["VIEWSTATE"],
+        "__VIEWSTATEGENERATOR":tokens["VIEWSTATEGENERATOR"],
         "ctl00_ctl00_TopMenuPlaceHolder_TopMenuContentPlaceHolder_MenuTop3_menuTop3_ClientState":"",
         "ctl00$ctl00$ContentPlaceHolder$MiddleContentPlaceHolder$txtIdent":username,
         "ctl00$ctl00$ContentPlaceHolder$MiddleContentPlaceHolder$txtHaslo":password,
@@ -82,36 +88,41 @@ def grab_data():
         "ctl00$ctl00$ContentPlaceHolder$MiddleContentPlaceHolder$rbKto":user
     }
 
-    req = session.post(URL, data=payload)
-    page = session.get("https://edziekanat.zut.edu.pl/WU/OcenyP.aspx")
+    return payload
+
+
+def grab_data(session):
+    page = session.get(DATA_URL)
     soup = BeautifulSoup(page.content, 'html.parser')
 
     data_temp = []
     data = []
-    table = soup.find(id="ctl00_ctl00_ContentPlaceHolder_RightContentPlaceHolder_dgDane")
 
-    try:
+    table = soup.find(id="ctl00_ctl00_ContentPlaceHolder_RightContentPlaceHolder_dgDane")
+    if(table is None):
+        print(f'Could not find data.\nCheck your credentials.')
+        exit()
+    else:
         rows = table.find_all('tr')
         for row in rows:
             cols = row.find_all('td')
             cols = [ele for ele in cols]
             data_temp.append([ele for ele in cols if ele])
-    except:
-        print('You propably entered wrong credentials')
-        input('restart application')
-        quit()
 
-    data_temp.pop(0)
+        data_temp.pop(0)
 
-    for przedm in data_temp:
-        li = list()
+        for przedm in data_temp:
+            li = list()
 
-        przedm = przedm[:2] + przedm[5:-3]
+            przedm = przedm[:2] + przedm[5:-3]
 
-        for i in range(len(przedm)):
-            li.append(przedm[i].find(text=True).replace(u'\xa0', u'Brak_oceny'))
+            for i in range(len(przedm)):
+                li.append(przedm[i].find(text=True).replace(u'\xa0', u'Brak_oceny')) # The "whitespace" eraser
 
-        data.append(li)
+            data.append(li)
+        
+        return data
+
 
 if __name__ == '__main__':
     username = input('Username: ')
@@ -120,26 +131,31 @@ if __name__ == '__main__':
     while(True):
         try:
             ss = int(input(f'Refresh rate in s: '))
-            if(ss < 1 and ss > 3600):
-                print("Try value between 1s and 1h")
+            if(ss < 10 and ss > 600):
+                print("Try value between 10s and 10mins")
                 continue
             break
         except:
             print("Not a valid input")
-    
-    grab_data()
-    saveto_file()
+
+    session=requests.Session()
+    session.headers.update(headers)
+
+    payload = get_payload(session, username, password)
+    resp = session.post(LOGIN_URL, data=payload)
+
+    data = grab_data(session)
+    saveto_file(data)
 
     while(True):
-        time.sleep(ss)
-
         clear()
         now = datetime.now()
         print(f'Last refresh: {now.strftime("%H:%M:%S")}')
+        time.sleep(ss)
 
-        grab_data()
-        check_changes()
-        saveto_file()
+        data = grab_data(session)
+        if(check_changes(data)):
+            saveto_file(data)
 
         
 
